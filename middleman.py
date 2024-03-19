@@ -90,6 +90,11 @@ def get_queue(blackbox_id):
     return jsonify(queued=lst)
 
 
+@app.route("/blackbox/location", methods=["GET"])
+def location():
+    return "1"
+
+
 @app.route("/printnext/<blackbox_id>", methods=["GET"])
 def print_next(blackbox_id):
     if not login(request.authorization, True):
@@ -166,6 +171,7 @@ def order_done(order_id):
 
 
 @app.route("/printer/<blackbox_id>", methods=["GET"])
+# todo: mark this as obsolete
 def get_printer_status(blackbox_id):
     if not login(request.authorization, True):
         return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})

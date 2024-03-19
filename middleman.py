@@ -7,7 +7,6 @@ app = Flask(__name__)
 
 
 def authenticate(username, password, is_printing: bool = False):
-
     if is_printing:
         result = connection.get_table("printer_company_login").find_one(printer_company_id=username,
                                                                         printer_company_password=password)

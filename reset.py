@@ -7,8 +7,6 @@ connection = connect("sqlite:///database")
 
 
 def purge_table_sqlite(table_name):
-
-    # clear all orders
     connection.query(f"DELETE FROM \"{table_name}\";")
     connection.query(f"DELETE FROM SQLITE_SEQUENCE WHERE name='{table_name}';")
 

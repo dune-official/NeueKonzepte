@@ -72,23 +72,14 @@ def get_queue(blackbox_id):
         return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})
 
     rng = request.args.get("range")
-
-    order_table = connection.get_table("order")
-    unresolved = order_table.find(blackbox_id=blackbox_id, done=0)
+    unresolved = connection.query(f"SELECT order_id FROM \"order\" "
+                                  f"WHERE blackbox_id IS {blackbox_id} "
+                                  f"AND done IS 0 "
+                                  f"{'LIMIT ' + str(rng) if rng is not None else ''}")
 
     lst = []
-    if rng is not None:
-        limit = rng
-    else:
-        # negative values don't reach 0 anymore
-        limit = -1
-
     for element in unresolved:
         lst.append(element["order_id"])
-
-        limit -= 1
-        if limit == 0:
-            break
 
     return jsonify(queued=lst)
 

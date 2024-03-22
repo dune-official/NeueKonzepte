@@ -18,7 +18,7 @@ def authenticate(username, password, is_printing: bool = False):
     return result is not None
 
 
-def print_again(order_id, count_now):
+def print_again(order_id, count_now) -> bool:
     order_info = connection.get_table("order").find_one(order_id=order_id)
     return count_now < order_info["count"]
 
@@ -50,14 +50,17 @@ def order():
     if not bb_single:
         return make_response("Invalid blackbox ID", 404)
 
-    if bb_single["printer_status"] == 0:
+    # todo: avoid that 2 Processes can enter the same time
+    if bb.find_one(blackbox_id=json["blackbox_id"])["printer_status"] == 0:
         # we can start printing now
 
-        response = post(bb_single["location"] + "/print", json={"file": json["file"], "order_id": order_id})
+        bb.update(dict(blackbox_id=json["blackbox_id"], printer_status=1), ["blackbox_id"])
+
+        response = post(bb_single["address"] + "/print", json=json | {"order_id": order_id})
         if response.status_code != 200:
+            # todo: delete order id
             return make_response("Could not start printing process", 400)
 
-        bb.update(dict(blackbox_id=json["blackbox_id"], printer_status=1), ["blackbox_id"])
         return make_response("Started printing", 200)
 
     return make_response("Added to the queue", 201)
@@ -91,28 +94,29 @@ def get_queue(blackbox_id):
 
 
 @app.route("/blackbox/location", methods=["GET"])
-def location():
+def location(location):
     return "1"
 
 
-@app.route("/printnext/<blackbox_id>", methods=["GET"])
-def print_next(blackbox_id):
-    if not login(request.authorization, True):
-        return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})
-
+def get_next(blackbox_id):
     order_table = connection.get_table("order")
     unresolved = order_table.find(blackbox_id=blackbox_id, done=0)
-    nxt = next(unresolved)
 
-    bb = connection.get_table("blackbox")
-    bb_single = bb.find_one(blackbox_id=blackbox_id)
+    try:
+        return next(unresolved)
+    except StopIteration:
+        return {}
 
-    response = post(bb_single["location"] + "/print", json={"file": nxt["file"]})
-    if response.status_code != 200:
-        return make_response("Could not start printing process", 400)
 
-    bb.update(dict(blackbox_id=blackbox_id, printer_status=1), ["blackbox_id"])
-    return make_response("Started printing", 200)
+def clear_queue(order_id, blackbox_id, blackbox_address):
+    connection.get_table("order").update(dict(order_id=order_id, done=1), ["order_id"])
+    next_element = get_next(blackbox_id)
+    if next_element == {}:
+        connection.get_table("blackbox").update(dict(blackbox_id=blackbox_id, printer_status=0),
+                                                ["blackbox_id"])
+        return
+
+    post(blackbox_address + "/print", json=next_element)
 
 
 @app.route("/status/<order_id>", methods=["GET"])
@@ -128,6 +132,8 @@ def printer_error(order_id):
     if not login(request.authorization, True):
         return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})
 
+    # todo: make this endpoint do something
+
     return order_id
 
 
@@ -138,6 +144,7 @@ def order_done(order_id):
 
     order_done_table = connection.get_table("order_done")
     done_already = order_done_table.find_one(order_id=order_id)
+    blackbox_address = connection.get_table("blackbox").find_one(blackbox_id=request.authorization.username)["address"]
 
     exists = connection.get_table("order").find_one(order_id=order_id)
     if exists is None:
@@ -147,53 +154,26 @@ def order_done(order_id):
         order_done_table.insert(dict(order_id=order_id, count=1))
 
         if print_again(order_id, 1):
+            post(blackbox_address + "/print_again")
             return make_response("Created, print again", 200)
         else:
             # clear the printer status and free the queue
-            connection.get_table("order").update(dict(order_id=order_id, done=1), ["order_id"])
-            connection.get_table("blackbox").update(dict(blackbox_id=exists["blackbox_id"], printer_status=0),
-                                                    ["blackbox_id"])
+            clear_queue(order_id, exists["blackbox_id"], blackbox_address)
             return make_response("Created, forbidden to print again", 403)
 
+    # failsafe
     if exists["done"] == 1 or done_already["count"] == exists["count"]:
         return make_response("Order done, forbidden to print again", 403)
 
     order_done_table.update(dict(order_id=order_id, count=done_already["count"] + 1), ["order_id"])
 
     if print_again(order_id, done_already["count"] + 1):
+        post(blackbox_address + "/print_again")
         return make_response("Updated, print again", 200)
     else:
         # clear the printer status and free the queue
-        connection.get_table("order").update(dict(order_id=order_id, done=1), ["order_id"])
-        connection.get_table("blackbox").update(dict(blackbox_id=exists["blackbox_id"], printer_status=0),
-                                                ["blackbox_id"])
+        clear_queue(order_id, exists["blackbox_id"], blackbox_address)
         return make_response("Updated, forbidden to print again", 403)
-
-
-@app.route("/printer/<blackbox_id>", methods=["GET"])
-# todo: mark this as obsolete
-def get_printer_status(blackbox_id):
-    if not login(request.authorization, True):
-        return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})
-
-    # todo: create blackbox api
-
-    blackbox_table = connection.get_table("blackbox")
-    blackbox_information = blackbox_table.find_one(blackbox_id=blackbox_id)
-
-    if blackbox_information is None:
-        return make_response("Unable to find blackbox", 404)
-
-    printer_status = get(blackbox_information["location"] + "/print", auth=request.authorization)
-    blackbox_table.update(dict(blackbox_id=blackbox_id, printer_status=printer_status), ["blackbox_id"])
-
-    # -1: unavailable
-    # 0: not busy
-    # 1: busy (printing)
-    # 2: busy (pause)
-    # 3: error
-
-    return jsonify(printer_status=blackbox_information["printer_status"])
 
 
 @app.route("/blackbox/<blackbox_id>", methods=["GET", "PUT"])
@@ -202,6 +182,12 @@ def control_blackbox(blackbox_id):
         return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})
 
     # todo: create blackbox api
+
+    # -1: unavailable
+    # 0: not busy
+    # 1: busy (printing)
+    # 2: busy (pause)
+    # 3: error
 
     blackbox_table = connection.get_table("blackbox")
     blackbox_information = blackbox_table.find_one(blackbox_id=blackbox_id)
@@ -214,7 +200,7 @@ def control_blackbox(blackbox_id):
         blackbox_table.update(json, ["blackbox_id"])
         return make_response("Success", 200)
 
-    info = get(blackbox_information["location"] + "/info", auth=request.authorization)
+    info = get(blackbox_information["address"] + "/info", auth=request.authorization)
     if not info.status_code == 200:
         return make_response(info.status_code)
 
@@ -222,4 +208,4 @@ def control_blackbox(blackbox_id):
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host="0.0.0.0")
+    app.run(host="0.0.0.0")

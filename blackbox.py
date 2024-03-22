@@ -1,5 +1,9 @@
-from flask import Flask, request, jsonify, make_response
-from requests import get, post
+from flask import Flask, request, make_response
+from requests import post
+from time import sleep
+from threading import Thread
+
+from json import loads, dumps
 
 app = Flask(__name__)
 
@@ -10,18 +14,36 @@ blackbox_id = "1"
 # todo: implement basic auth and check in any function
 
 
-async def print_file(json: dict):
-    # todo: handle that somehow, preferably with Samuel
+def get_current_order() -> dict:
+    return loads(open("current_order.json", 'r').read())
 
-    file = json.get("file")
+
+def set_current_order(json: dict):
+    open("current_order.json", 'w').write(dumps(json))
+
+
+def print_file():
+
+    current = get_current_order()
+
+    file = current.get("file")
     if file is None:
         return
 
-    file = bytes.fromhex(file)
+    # random conversion to stall time
+    file = bytes.fromhex(file).hex()
 
-    print("\n-- Printing order --")
-    print(file.hex().upper())
+    print(f"\n-- Printing order \"{current['description']}\" --")
+    for letter in file:
+        print(letter, end='')
+        sleep(.5)
+
     print()
+
+    input("Press enter to confirm printer tray is clear")
+    print(f"-- Finished printing \"{current['description']}\" --")
+
+    post(MIDDLEMAN + f"/done/{current['order_id']}", auth=AUTH)
 
 
 @app.route("/info", methods=["GET"])
@@ -32,7 +54,7 @@ def info():
     return
 
 
-@app.route("/set", methods=["POST"])
+@app.route("/control", methods=["POST"])
 def set_status():
 
     json = request.json
@@ -42,54 +64,29 @@ def set_status():
     return make_response("Success", 200)
 
 
-@app.route("/print", methods=["GET", "POST"])
+@app.route("/print", methods=["POST"])
 async def process_order():
 
-    if request.method == "GET":
-        # -1: unavailable
-        # 0: not busy
-        # 1: busy (printing)
-        # 2: busy (pause)
-        # 3: error
-
-        # todo: actually do this
-        return jsonify(status=0)
-
     # todo: actually print the file
-    await print_file(request.json)
+
+    set_current_order(request.json)
+
+    t = Thread(target=print_file)
+    t.start()
 
     return make_response("Started printing!", 200)
 
 
-@app.route("/done/<order_id>")
-async def current_file_done(order_id):
+@app.route("/print_again", methods=["POST"])
+async def process_order_again():
 
-    response = post(MIDDLEMAN + f"/done/{order_id}", auth=AUTH)
+    # todo: actually print the file
 
-    if response.status_code == 401:
-        # todo: handle error
-        return make_response("Failed to authenticate", 401)
+    t = Thread(target=print_file)
+    t.start()
 
-    if response.status_code == 200:
-
-        # todo: print order again
-        return make_response("Continuing printing", 200)
-
-    if response.status_code == 404:
-
-        # todo: handle error
-        return make_response("Could not find order", 404)
-
-    if response.status_code == 403:
-
-        # get next printing order of the queue
-        response = get(MIDDLEMAN + f"/printnext/{blackbox_id}", auth=AUTH)
-        if response.status_code == 200:
-
-            await print_file(request.json)
-
-        return make_response("Stopping to print, delete file", 403)
+    return make_response("Started printing!", 200)
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host="0.0.0.0", port=1234)
+    app.run(host="0.0.0.0", port=1234)

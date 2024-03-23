@@ -1,1 +1,1 @@
-{"description": "door", "count": 3, "file": "0123456789abcdef", "blackbox_id": "1", "order_id": 3}
+{"order_id": 2, "description": "door", "count": 3, "file": "0123456789abcdef", "blackbox_id": 1, "manufacturer_id": 1, "done": 0}

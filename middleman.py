@@ -118,7 +118,7 @@ def get_status(order_id):
 
     # todo: make this endpoint do something
 
-    return {"orderID": order_id, "statusName": "In Progress", "progress": 60.123}
+    return {"orderID": order_id, "statusCode": 0, "progress": 60.123}
 
 
 @app.route("/error/<order_id>", methods=["POST"])

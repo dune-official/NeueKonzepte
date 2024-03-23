@@ -45,9 +45,11 @@ def order():
     json = request.json
     order_table = connection.get_table("order")
 
+    # the custom order does not matter, the database has a trigger that updates it to the row id anyway
+    # it just has to be present
     order_id = order_table.insert(dict(description=json.get("description", ''), count=json["count"], file=json["file"],
                                        blackbox_id=json["blackbox_id"], manufacturer_id=request.authorization.username,
-                                       status=0, custom_order=json["order"]))
+                                       status=0, custom_order=0))
 
     bb = connection.get_table("blackbox")
     bb_single = bb.find_one(blackbox_id=json["blackbox_id"])
@@ -66,12 +68,13 @@ def order():
             # todo: delete order id
             return make_response("Could not start printing process", 400)
 
-        return make_response("Started printing", 200)
+        return make_response(jsonify(order_id=order_id), 200)
 
-    return make_response("Added to the queue", 201)
+    return make_response(jsonify(order_id=order_id), 201)
 
 
 @app.route("/queue/<blackbox_id>", methods=["GET"])
+@app.route("/queue/<blackbox_id>/full", methods=["GET"])
 def get_queue(blackbox_id):
     if not login(request.authorization, True):
         return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})
@@ -79,9 +82,9 @@ def get_queue(blackbox_id):
     rng = request.args.get("range")
     unresolved = connection.query(f"SELECT order_id FROM \"order\" "
                                   f"WHERE blackbox_id IS {blackbox_id} "
-                                  f"AND status IS 0 "
-                                  f"{'LIMIT ' + str(rng) if rng is not None else ''}"
-                                  f"ORDER BY custom_order")
+                                  f"{'AND status IS 0 ' if not request.path.endswith('/full') else ''} "
+                                  f"ORDER BY custom_order "
+                                  f"{'LIMIT ' + str(rng) if rng is not None else ''} ")
 
     lst = []
     for element in unresolved:
@@ -97,18 +100,21 @@ def location(location):
 
 def get_next(blackbox_id):
     # todo: make dummy account
-    return get("http://localhost:5000?range=1", auth=("1", "loerrach")).json()
+    return get(f"http://localhost:5000/queue/{blackbox_id}?range=1", auth=("1", "loerrach")).json()
 
 
 def clear_queue(order_id, blackbox_id, blackbox_address):
-    connection.get_table("order").update(dict(order_id=order_id, status=1), ["order_id"])
+
+    order_table = connection.get_table("order")
+
+    order_table.update(dict(order_id=order_id, status=1), ["order_id"])
     next_element = get_next(blackbox_id)
-    if next_element == {}:
+    if not next_element["queued"]:
         connection.get_table("blackbox").update(dict(blackbox_id=blackbox_id, printer_status=0),
                                                 ["blackbox_id"])
         return
 
-    post(blackbox_address + "/print", json=next_element)
+    post(blackbox_address + "/print", json=order_table.find_one(order_id=next_element["queued"][0]))
 
 
 @app.route("/status/<order_id>", methods=["GET"])
@@ -159,7 +165,7 @@ def order_done(order_id):
             return make_response("Created, forbidden to print again", 403)
 
     # failsafe
-    if exists["done"] == 1 or done_already["count"] == exists["count"]:
+    if exists["status"] == 1 or done_already["count"] == exists["count"]:
         return make_response("Order done, forbidden to print again", 403)
 
     order_done_table.update(dict(order_id=order_id, count=done_already["count"] + 1), ["order_id"])
@@ -206,6 +212,8 @@ def control_blackbox(blackbox_id):
 
 @app.route("/reorder", methods=["POST"])
 def reorder():
+    if not login(request.authorization, True):
+        return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})
 
     swap = request.args.get("order1")
     with_ = request.args.get("order2")
@@ -215,8 +223,8 @@ def reorder():
 
     temp = connection.get_table("order").find_one(order_id=swap)
     temp2 = connection.get_table("order").find_one(order_id=with_)
-    connection.get_table("order").update(dict(order_id=with_, custom_order=temp))
-    connection.get_table("order").update(dict(order_id=swap, custom_order=temp2))
+    connection.get_table("order").update(dict(order_id=with_, custom_order=temp["custom_order"]), ["order_id"])
+    connection.get_table("order").update(dict(order_id=swap, custom_order=temp2["custom_order"]), ["order_id"])
 
     return make_response("Successfully swapped orders", 200)
 

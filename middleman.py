@@ -2,6 +2,10 @@ from flask import Flask, request, jsonify, make_response
 from dataset import connect
 from requests import get, post
 
+from Crypto.PublicKey import RSA
+from Crypto.Random import get_random_bytes
+from Crypto.Cipher import AES, PKCS1_OAEP
+
 connection = connect("sqlite:///database")
 app = Flask(__name__)
 
@@ -42,30 +46,47 @@ def order():
     if not login(request.authorization):
         return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})
 
-    json = request.json
-    order_table = connection.get_table("order")
-
-    # the custom order does not matter, the database has a trigger that updates it to the row id anyway
-    # it just has to be present
-    order_id = order_table.insert(dict(description=json.get("description", ''), count=json["count"], file=json["file"],
-                                       blackbox_id=json["blackbox_id"], manufacturer_id=request.authorization.username,
-                                       status=0, custom_order=0))
-
     bb = connection.get_table("blackbox")
+
+    json = request.json
     bb_single = bb.find_one(blackbox_id=json["blackbox_id"])
 
     if not bb_single:
         return make_response("Invalid blackbox ID", 404)
 
-    # todo: avoid that 2 Processes can enter the same time
-    if bb.find_one(blackbox_id=json["blackbox_id"])["printer_status"] == 0:
-        # we can start printing now
-
+    if bb_single["printer_status"] == 0:
+        # set the printer status as fast as possible to avoid a race condition
         bb.update(dict(blackbox_id=json["blackbox_id"], printer_status=1), ["blackbox_id"])
+
+    order_table = connection.get_table("order")
+
+    # encrypt the file
+    file = bytes.fromhex(json["file"])
+    pkey = RSA.import_key(open("blackbox_pub.pem").read())
+    session_key = get_random_bytes(16)
+
+    rsa_cipher = PKCS1_OAEP.new(pkey)
+    enc_session_key = rsa_cipher.encrypt(session_key)
+
+    cipher = AES.new(session_key, AES.MODE_EAX)
+    encrypted_file, tag = cipher.encrypt_and_digest(file)
+
+    encrypted_file = enc_session_key + cipher.nonce + tag + encrypted_file
+
+    json["file"] = encrypted_file.hex()
+
+    # the custom order does not matter, the database has a trigger that updates it to the row id anyway
+    # it just has to be present
+    order_id = order_table.insert(dict(description=json.get("description", ''), count=json["count"],
+                                       file=json["file"], blackbox_id=json["blackbox_id"],
+                                       manufacturer_id=request.authorization.username, status=0,
+                                       custom_order=0))
+
+    if bb_single["printer_status"] == 0:
+        # we can start printing now
 
         response = post(bb_single["address"] + "/print", json=json | {"order_id": order_id})
         if response.status_code != 200:
-            # todo: delete order id
             return make_response("Could not start printing process", 400)
 
         return make_response(jsonify(order_id=order_id), 200)

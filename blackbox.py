@@ -2,10 +2,15 @@ from flask import Flask, request, make_response
 from requests import post
 from time import sleep
 from threading import Thread
-
+from io import BytesIO
 from json import loads, dumps
 
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_OAEP
+
 app = Flask(__name__)
+
+private_key = RSA.import_key(open("blackbox.pem", 'rb').read(), "password")
 
 MIDDLEMAN = "http://localhost:5000"
 AUTH = (1, "loerrach")
@@ -69,7 +74,21 @@ async def process_order():
 
     # todo: actually print the file
 
-    set_current_order(request.json)
+    json = request.json
+    encrypted_file = BytesIO(bytes.fromhex(json["file"]))
+
+    encrypted_session_key = encrypted_file.read(private_key.size_in_bytes())
+    nonce = encrypted_file.read(16)
+    tag = encrypted_file.read(16)
+    encrypted_file = encrypted_file.read()
+
+    cipher_rsa = PKCS1_OAEP.new(private_key)
+    session_key = cipher_rsa.decrypt(encrypted_session_key)
+
+    cipher = AES.new(session_key, AES.MODE_EAX, nonce)
+    json["file"] = cipher.decrypt_and_verify(encrypted_file, tag).hex()
+
+    set_current_order(json)
 
     t = Thread(target=print_file)
     t.start()

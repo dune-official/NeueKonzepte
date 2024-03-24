@@ -41,6 +41,16 @@ def login(auth, is_printer: bool = False):
     return auth and authenticate(auth.username, auth.password, is_printer)
 
 
+@app.route("/login", methods=["GET"])
+@app.route("/login/printer", methods=["GET"])
+def check_login():
+
+    if not login(request.authorization, request.path.endswith("printer")):
+        return make_response("Could not verify!", 401, {"WWW-Authenticate": "Basic realm=\"Login Required\""})
+
+    return make_response("Successfully verified", 200)
+
+
 @app.route("/order", methods=["POST"])
 def order():
     if not login(request.authorization):

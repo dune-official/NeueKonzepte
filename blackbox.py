@@ -1,4 +1,4 @@
-from flask import Flask, request, make_response
+from flask import Flask, request, make_response, jsonify
 from requests import post
 from time import sleep
 from threading import Thread
@@ -8,11 +8,14 @@ from json import loads, dumps
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_OAEP
 
+import printer
+
 app = Flask(__name__)
+prnt = printer.Printer(printer.HOST, printer.PORT)
 
 private_key = RSA.import_key(open("blackbox.pem", 'rb').read(), "password")
 
-MIDDLEMAN = "http://localhost:5000"
+MIDDLEMAN = "http://localhost:60000"
 AUTH = (1, "loerrach")
 blackbox_id = "1"
 
@@ -54,9 +57,7 @@ def print_file():
 @app.route("/info", methods=["GET"])
 def info():
 
-    # todo: decide what to return
-
-    return
+    return make_response(jsonify({"percentage": prnt.percent()}), 200)
 
 
 @app.route("/control", methods=["POST"])
@@ -69,12 +70,13 @@ def set_status():
     return make_response("Success", 200)
 
 
-@app.route("/print", methods=["POST"])
-async def process_order():
+@app.route("/print/<offset>", methods=["POST"])
+def process_order(offset):
 
     # todo: actually print the file
 
     json = request.json
+
     encrypted_file = BytesIO(bytes.fromhex(json["file"]))
 
     encrypted_session_key = encrypted_file.read(private_key.size_in_bytes())
@@ -86,22 +88,23 @@ async def process_order():
     session_key = cipher_rsa.decrypt(encrypted_session_key)
 
     cipher = AES.new(session_key, AES.MODE_EAX, nonce)
-    json["file"] = cipher.decrypt_and_verify(encrypted_file, tag).hex()
+    file = cipher.decrypt_and_verify(encrypted_file, tag).decode()
 
-    set_current_order(json)
-
-    t = Thread(target=print_file)
+    set_current_order({"file": file, "order_id": json["order_id"]})
+    t = Thread(target=prnt.start, kwargs={"text": file, "order_id": json["order_id"],
+                                          "offset": int(offset)})
     t.start()
 
     return make_response("Started printing!", 200)
 
 
 @app.route("/print_again", methods=["POST"])
-async def process_order_again():
+def process_order_again():
 
     # todo: actually print the file
 
-    t = Thread(target=print_file)
+    cur_order = get_current_order()
+    t = Thread(target=prnt.start, kwargs={"text": cur_order["file"], "order_id": cur_order["order_id"]})
     t.start()
 
     return make_response("Started printing!", 200)

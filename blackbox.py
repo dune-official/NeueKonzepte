@@ -19,8 +19,6 @@ MIDDLEMAN = "http://localhost:60000"
 AUTH = (1, "loerrach")
 blackbox_id = "1"
 
-# todo: implement basic auth and check in any function
-
 
 def get_current_order() -> dict:
     return loads(open("current_order.json", 'r').read())
@@ -62,18 +60,12 @@ def info():
 
 @app.route("/control", methods=["POST"])
 def set_status():
-
     json = request.json
-
-    # todo: handle that somehow, preferably with Samuel
-
     return make_response("Success", 200)
 
 
 @app.route("/print/<offset>", methods=["POST"])
 def process_order(offset):
-
-    # todo: actually print the file
 
     json = request.json
 
@@ -100,8 +92,6 @@ def process_order(offset):
 
 @app.route("/print_again", methods=["POST"])
 def process_order_again():
-
-    # todo: actually print the file
 
     cur_order = get_current_order()
     t = Thread(target=prnt.start, kwargs={"text": cur_order["file"], "order_id": cur_order["order_id"]})

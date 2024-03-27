@@ -156,7 +156,6 @@ def get_status(order_id):
     if not login(request.authorization) and not login(request.authorization, True):
         return make_response(jsonify({"WWW-Authenticate": "Basic realm=\"Login Required\""}), 401)
 
-    # todo: make this endpoint do something
     table = connection.get_table("order")
     cur_order = table.find_one(order_id=order_id)
 
@@ -172,6 +171,7 @@ def printer_error(order_id):
     if not login(request.authorization, True):
         return make_response(jsonify({"WWW-Authenticate": "Basic realm=\"Login Required\""}), 401)
 
+    # alternative methods are also available (as opposed to mail)
     connection.get_table("order").update(dict(order_id=order_id, status=2), ["order_id"])
     order_ = connection.get_table("order").find_one(order_id=order_id)
     send_mail(order_["manufacturer_id"], request.json["log"])

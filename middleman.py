@@ -133,7 +133,6 @@ def location(location):
 
 
 def get_next(blackbox_id):
-    # todo: make dummy account
     return get(f"http://localhost:60000/queue/{blackbox_id}?range=1", auth=("1", "loerrach")).json()
 
 
@@ -223,8 +222,6 @@ def order_done(order_id):
 def control_blackbox(blackbox_id):
     if not login(request.authorization, True):
         return make_response(jsonify({"WWW-Authenticate": "Basic realm=\"Login Required\""}), 401)
-
-    # todo: create blackbox api
 
     # -1: unavailable
     # 0: not busy

@@ -35,13 +35,13 @@ def send_mail(manufacturer_id, content):
     print(content)
 
 
-@app.route("/")
-def index():
-    return "Welcome to the internet"
-
-
 def login(auth, is_printer: bool = False):
     return auth and authenticate(auth.username, auth.password, is_printer)
+
+
+@app.route("/")
+def index():
+    return make_response("Success", 200)
 
 
 @app.route("/login", methods=["GET"])
@@ -107,13 +107,14 @@ def order():
     return make_response(jsonify(order_id=order_id), 201)
 
 
-@app.route("/queue/<blackbox_id>", methods=["GET"])
+@app.route("/queue/<blackbox_id>/<rng>", methods=["GET"])
 @app.route("/queue/<blackbox_id>/full", methods=["GET"])
-def get_queue(blackbox_id):
-    if not login(request.authorization, True):
-        return make_response(jsonify({"WWW-Authenticate": "Basic realm=\"Login Required\""}), 401)
+def get_queue(blackbox_id, rng=None):
+    # if not login(request.authorization, True):
+    #     return make_response(jsonify({"WWW-Authenticate": "Basic realm=\"Login Required\""}), 401)
 
-    rng = request.args.get("range")
+    # rng = request.args.get("range")
+
     unresolved = connection.query(f"SELECT order_id FROM \"order\" "
                                   f"WHERE blackbox_id IS {blackbox_id} "
                                   f"{'AND status IS 0 ' if not request.path.endswith('/full') else ''} "
@@ -132,16 +133,12 @@ def location(location):
     return "1"
 
 
-def get_next(blackbox_id):
-    return get(f"http://localhost:60000/queue/{blackbox_id}?range=1", auth=("1", "loerrach")).json()
-
-
 def clear_queue(order_id, blackbox_id, blackbox_address):
 
     order_table = connection.get_table("order")
 
     order_table.update(dict(order_id=order_id, status=1), ["order_id"])
-    next_element = get_next(blackbox_id)
+    next_element = get_queue(blackbox_id, 1)
     if not next_element["queued"]:
         connection.get_table("blackbox").update(dict(blackbox_id=blackbox_id, printer_status=0),
                                                 ["blackbox_id"])

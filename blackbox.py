@@ -58,6 +58,13 @@ def info():
     return make_response(jsonify({"percentage": prnt.percent()}), 200)
 
 
+@app.route("/pubkey")
+def pubkey():
+
+    file_string = RSA.import_key(open("blackbox.pem", 'rb').read())
+    return make_response(jsonify(key=file_string), 200)
+
+
 @app.route("/control", methods=["POST"])
 def set_status():
     json = request.json

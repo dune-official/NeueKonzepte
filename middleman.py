@@ -39,6 +39,20 @@ def login(auth, is_printer: bool = False):
     return auth and authenticate(auth.username, auth.password, is_printer)
 
 
+def clear_queue(order_id, blackbox_id, blackbox_address):
+
+    order_table = connection.get_table("order")
+
+    order_table.update(dict(order_id=order_id, status=1), ["order_id"])
+    next_element = get_queue(blackbox_id, 1).json
+    if not next_element["queued"]:
+        connection.get_table("blackbox").update(dict(blackbox_id=blackbox_id, printer_status=0),
+                                                ["blackbox_id"])
+        return
+
+    post(blackbox_address + "/print/0", json=order_table.find_one(order_id=next_element["queued"][0]))
+
+
 @app.route("/")
 def index():
     return make_response("Success", 200)
@@ -125,26 +139,12 @@ def get_queue(blackbox_id, rng=None):
     for element in unresolved:
         lst.append(element["order_id"])
 
-    return jsonify(queued=lst)
+    return make_response(jsonify(queued=lst), 200)
 
 
 @app.route("/blackbox/location", methods=["GET"])
 def location(location):
     return "1"
-
-
-def clear_queue(order_id, blackbox_id, blackbox_address):
-
-    order_table = connection.get_table("order")
-
-    order_table.update(dict(order_id=order_id, status=1), ["order_id"])
-    next_element = get_queue(blackbox_id, 1)
-    if not next_element["queued"]:
-        connection.get_table("blackbox").update(dict(blackbox_id=blackbox_id, printer_status=0),
-                                                ["blackbox_id"])
-        return
-
-    post(blackbox_address + "/print/0", json=order_table.find_one(order_id=next_element["queued"][0]))
 
 
 @app.route("/status/<order_id>", methods=["GET"])
@@ -215,6 +215,40 @@ def order_done(order_id):
         return make_response(jsonify({"text": "Updated, forbidden to print again"}), 403)
 
 
+@app.route("/reorder", methods=["POST"])
+def reorder():
+    if not login(request.authorization, True):
+        return make_response(jsonify({"WWW-Authenticate": "Basic realm=\"Login Required\""}), 401)
+
+    swap = request.args.get("order1")
+    with_ = request.args.get("order2")
+
+    if swap is None or with_ is None:
+        return make_response(jsonify({"text": "order1 and order2 need to be present"}), 403)
+
+    temp = connection.get_table("order").find_one(order_id=swap)
+    temp2 = connection.get_table("order").find_one(order_id=with_)
+    connection.get_table("order").update(dict(order_id=with_, custom_order=temp["custom_order"]), ["order_id"])
+    connection.get_table("order").update(dict(order_id=swap, custom_order=temp2["custom_order"]), ["order_id"])
+
+    return make_response(jsonify({"text": "Successfully swapped orders"}), 200)
+
+
+@app.route("pubkey/<blackbox_id>", methods=["GET"])
+def public_key(blackbox_id):
+    if not login(request.authorization):
+        return make_response(jsonify({"WWW-Authenticate": "Basic realm=\"Login Required\""}), 401)
+
+    blackbox_table = connection.get_table("blackbox")
+    blackbox_information = blackbox_table.find_one(blackbox_id=blackbox_id)
+    key = get(blackbox_information["location"] + "/pubkey")
+
+    if key.status_code != 200:
+        return make_response("Unable to retrieve public key", key.status_code)
+
+    return make_response(key.text, 200)
+
+
 @app.route("/blackbox/<blackbox_id>", methods=["GET", "PUT"])
 def control_blackbox(blackbox_id):
     if not login(request.authorization, True):
@@ -242,25 +276,6 @@ def control_blackbox(blackbox_id):
         return make_response(info.status_code)
 
     return info.json()
-
-
-@app.route("/reorder", methods=["POST"])
-def reorder():
-    if not login(request.authorization, True):
-        return make_response(jsonify({"WWW-Authenticate": "Basic realm=\"Login Required\""}), 401)
-
-    swap = request.args.get("order1")
-    with_ = request.args.get("order2")
-
-    if swap is None or with_ is None:
-        return make_response(jsonify({"text": "order1 and order2 need to be present"}), 403)
-
-    temp = connection.get_table("order").find_one(order_id=swap)
-    temp2 = connection.get_table("order").find_one(order_id=with_)
-    connection.get_table("order").update(dict(order_id=with_, custom_order=temp["custom_order"]), ["order_id"])
-    connection.get_table("order").update(dict(order_id=swap, custom_order=temp2["custom_order"]), ["order_id"])
-
-    return make_response(jsonify({"text": "Successfully swapped orders"}), 200)
 
 
 if __name__ == '__main__':
